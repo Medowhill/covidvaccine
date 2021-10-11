@@ -81,9 +81,7 @@ class SheetWrapper(sheet: Sheet):
 
   def write(ss: (String | Double)*): Unit =
     val r = newRow()
-    ss.zipWithIndex.foreach { case (s, i) =>
-      write(r, i, s)
-    }
+    ss.zipWithIndex.foreach((s, i) => write(r, i, s))
 
   def write(ss: List[String | Double]): Unit =
     write(ss: _*)
@@ -95,6 +93,5 @@ class SheetWrapper(sheet: Sheet):
   def clearStyle(): Unit = style = None
 
   def computeWidth(): Unit =
-    map.foreach { case (i, l) =>
+    for (i, l) <- map do
       sheet.setColumnWidth(i, (widthMap.getOrElse(i, l) * 256 + 256) min 12800)
-    }

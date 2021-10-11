@@ -18,7 +18,7 @@ lazy val unreachable = sys.error("unreachable")
   val pevs = (rows(fn3) ++ rows(fn2) ++ rows(fn1))
     .map(Respondant.parse)
     .groupBy(_._1)
-    .map { case (p, l) => p -> (l.map(_._2), l.map(_._3)) }
+    .map((p, l) => p -> (l.map(_._2), l.map(_._3)))
     .toList
     .sortBy(_._1)
 
@@ -29,18 +29,18 @@ lazy val unreachable = sys.error("unreachable")
   println(s"유효 응답자 수: ${pvs.length}명")
   println(s"잘못된 응답자 수: ${pes.length}명")
 
-  val vMap = pvs.flatMap { case (p, v) =>
+  val vMap = pvs.flatMap { (p, v) =>
     (if (p.sn.nonEmpty) List(p.sn -> v) else Nil) ++
       (if (p.en.nonEmpty) List(p.en -> v) else Nil)
   }.toMap
-  val eSet = pes.flatMap { case (p, _) =>
+  val eSet = pes.flatMap { (p, _) =>
     (if (p.sn.nonEmpty) List(p.sn) else Nil) ++
       (if (p.en.nonEmpty) List(p.en) else Nil)
   }.toSet
-  val depts = people.groupBy(_.dept).toList.sortBy(_._1).map { case (d, p) =>
+  val depts = people.groupBy(_.dept).toList.sortBy(_._1).map { (d, p) =>
     Group(d, p, vMap, eSet)
   }
-  val states = people.groupBy(_.role).toList.sortBy(_._1).map { case (r, p) =>
+  val states = people.groupBy(_.role).toList.sortBy(_._1).map { (r, p) =>
     Group(r, p, vMap, eSet)
   }
   val header =
@@ -72,9 +72,7 @@ lazy val unreachable = sys.error("unreachable")
       sheet.setStyle(st)
       val a: List[String | Double] = "전체" :: l
         .map(_.getStat)
-        .foldLeft(List.fill(8)(0.0))((a, b) =>
-          a.zip(b).map { case (x, y) => x + y }
-        )
+        .foldLeft(List.fill(8)(0.0))((a, b) => a.zip(b).map(_ + _))
       sheet.write(a)
 
     wb.writeSheet("직군별 통계")(aux("직군", states))
@@ -105,7 +103,7 @@ lazy val unreachable = sys.error("unreachable")
     depts
       .filter(_.notRespondedActive != 0)
       .partition(_.notRespondedActive >= 30)
-  large.foreach { d =>
+  for d <- large do
     writeWorkbook(s"${d.name}.xlsx") { wb =>
       val st = wb.createStyle(0xc0, 0xc0, 0xc0)
       wb.writeSheet("미응답자") { sheet =>
@@ -115,18 +113,16 @@ lazy val unreachable = sys.error("unreachable")
         d.nraList.map(_.getData).foreach(sheet.write)
       }
     }
-  }
   writeWorkbook("기타 부서.xlsx") { wb =>
     val st = wb.createStyle(0xc0, 0xc0, 0xc0)
     wb.writeSheet("미응답자") { sheet =>
       sheet.setStyle(st)
       sheet.write("이름", "사번", "학번", "이메일")
-      small.foreach { d =>
+      for d <- small do
         sheet.setStyle(st)
         sheet.write(d.name, "", "", "")
         sheet.clearStyle()
         d.nraList.map(_.getData).foreach(sheet.write)
-      }
     }
   }
 
@@ -138,10 +134,3 @@ def resolveHome(fn: String): String =
 
 def rows(fn: String, pw: String = null) =
   getRows(resolveHome(fn), pw).tail.map(getStrings)
-
-def unvaccinated(l: List[(Respondant, Vaccine)]) =
-  l.count(_._2.unvaccinated).toDouble
-
-def ongoing(l: List[(Respondant, Vaccine)]) = l.count(_._2.ongoing).toDouble
-
-def completed(l: List[(Respondant, Vaccine)]) = l.count(_._2.completed).toDouble

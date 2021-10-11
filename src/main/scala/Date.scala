@@ -19,7 +19,7 @@ def parseDate(s: String, f: String => Error): Either[Error, LocalDate] =
         case "2" :: "21" :: m :: d :: Nil       => Some((m, d))
         case "2" :: "2" :: "1" :: m :: d :: Nil => Some((m, d))
         case _                                  => None
-      opt.map { case (m, d) => f"2021${m.toInt}%02d${d.toInt}%02d" }
+      opt.map((m, d) => f"2021${m.toInt}%02d${d.toInt}%02d")
     val Md = "(\\d+)월 *(\\d+)일.*".r
     val kor = s match {
       case Md(m, d) => Some(f"2021${m.toInt}%02d${d.toInt}%02d")
