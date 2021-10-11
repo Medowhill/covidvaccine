@@ -1,34 +1,134 @@
-import Vaccine.{Unvaccinated, Ongoing, Completed}
-
-import org.apache.poi.ss.usermodel.{WorkbookFactory, Row, Cell, CellType}
-import org.joda.time.format.DateTimeFormat
-import org.joda.time.{DateTimeComparator, LocalDate}
-
-import java.io.File
-import File.separator as SEP
-
-import scala.jdk.CollectionConverters._
+import java.io.File.separator as SEP
 
 lazy val unreachable = sys.error("unreachable")
 
-@main def main(fn1: String, fn2: String, fn3: String): Unit =
-  def rows(fn: String) = getRows(resolveHome(fn)).tail.map(getStrings)
-  val people = (rows(fn1) ++ rows(fn2) ++ rows(fn3)).map(Person.apply)
+@main def main(
+    fn1: String,
+    fn2: String,
+    fn3: String,
+    fnSt: String,
+    stPw: String,
+    fnEm: String,
+    emPw: String
+): Unit =
+  val students = rows(fnSt, stPw).map(Student.parse)
+  val employees = rows(fnEm, emPw).map(Employee.parse)
+  val people = (students ++ employees).sorted
 
-  println(people.length)
-  println()
+  val pevs = (rows(fn3) ++ rows(fn2) ++ rows(fn1))
+    .map(Respondant.parse)
+    .groupBy(_._1)
+    .map { case (p, l) => p -> (l.map(_._2), l.map(_._3)) }
+    .toList
+    .sortBy(_._1)
 
-  for
-    p <- people;
-    e <- p.vaccine.swap.toOption
-  yield println(s"${p.name}: $e")
-  println()
+  val pvs = pevs.collect { case (p, (Right(v) :: _, _)) => p -> v }
+  val pes = pevs.filter(_._2._1.head.isLeft)
 
-  val dups = people.groupBy(_.nums).filter { case (_, v) => v.length > 1 }
-  for
-    (_, v) <- dups;
-    p <- v
-  yield println(s"${p.name}: ${p.vaccine}")
+  println(s"총 응답자 수: ${pevs.length}명")
+  println(s"유효 응답자 수: ${pvs.length}명")
+  println(s"잘못된 응답자 수: ${pes.length}명")
+
+  val vMap = pvs.flatMap { case (p, v) =>
+    (if (p.sn.nonEmpty) List(p.sn -> v) else Nil) ++
+      (if (p.en.nonEmpty) List(p.en -> v) else Nil)
+  }.toMap
+  val eSet = pes.flatMap { case (p, _) =>
+    (if (p.sn.nonEmpty) List(p.sn) else Nil) ++
+      (if (p.en.nonEmpty) List(p.en) else Nil)
+  }.toSet
+  val depts = people.groupBy(_.dept).toList.sortBy(_._1).map { case (d, p) =>
+    Group(d, p, vMap, eSet)
+  }
+  val states = people.groupBy(_.role).toList.sortBy(_._1).map { case (r, p) =>
+    Group(r, p, vMap, eSet)
+  }
+  val header =
+    List(
+      "총 인원",
+      "미응답자",
+      "미응답자(재직/재학)",
+      "잘못된 응답자",
+      "유효 응답자",
+      "미접종자",
+      "부분 완료자",
+      "완료자"
+    )
+
+  val errors = pes.map { case (p, (es, is)) =>
+    val i2 = is.find(_.length == 3).getOrElse(List("", "", ""))
+    val i3 = is.find(_.length == 4).getOrElse(List("", "", "", ""))
+    val e = es.collect { case Left(e) => e.toString }.mkString(", ")
+    List(p.name, p.en, p.sn, p.email) ++ i2 ++ i3 :+ e
+  }
+
+  writeWorkbook("설문조사 응답 현황.xlsx") { wb =>
+    val st = wb.createStyle(0xc0, 0xc0, 0xc0)
+    def aux(s: String, l: List[Group])(sheet: SheetWrapper) =
+      sheet.setStyle(st)
+      sheet.write(s :: header)
+      sheet.clearStyle()
+      l.map(_.getData).foreach(sheet.write)
+      sheet.setStyle(st)
+      val a: List[String | Double] = "전체" :: l
+        .map(_.getStat)
+        .foldLeft(List.fill(8)(0.0))((a, b) =>
+          a.zip(b).map { case (x, y) => x + y }
+        )
+      sheet.write(a)
+
+    wb.writeSheet("직군별 통계")(aux("직군", states))
+    wb.writeSheet("부서별 통계")(aux("부서", depts))
+    wb.writeSheet("잘못된 응답") { sheet =>
+      (4 to 10).foreach(sheet.setWidth(_, 10))
+      sheet.setStyle(st)
+      sheet.write(
+        "이름",
+        "사번",
+        "학번",
+        "이메일",
+        "1차 접종일",
+        "1차 로트번호",
+        "2차 예정일",
+        "1차 접종일",
+        "1차 로트번호",
+        "2차 접종일",
+        "2차 로트번호",
+        "상세"
+      )
+      sheet.clearStyle()
+      errors.foreach(sheet.write)
+    }
+  }
+
+  val (large, small) =
+    depts
+      .filter(_.notRespondedActive != 0)
+      .partition(_.notRespondedActive >= 30)
+  large.foreach { d =>
+    writeWorkbook(s"${d.name}.xlsx") { wb =>
+      val st = wb.createStyle(0xc0, 0xc0, 0xc0)
+      wb.writeSheet("미응답자") { sheet =>
+        sheet.setStyle(st)
+        sheet.write("이름", "사번", "학번", "이메일")
+        sheet.clearStyle()
+        d.nraList.map(_.getData).foreach(sheet.write)
+      }
+    }
+  }
+  writeWorkbook("기타 부서.xlsx") { wb =>
+    val st = wb.createStyle(0xc0, 0xc0, 0xc0)
+    wb.writeSheet("미응답자") { sheet =>
+      sheet.setStyle(st)
+      sheet.write("이름", "사번", "학번", "이메일")
+      small.foreach { d =>
+        sheet.setStyle(st)
+        sheet.write(d.name, "", "", "")
+        sheet.clearStyle()
+        d.nraList.map(_.getData).foreach(sheet.write)
+      }
+    }
+  }
 
 def resolveHome(fn: String): String =
   if (fn.startsWith(s"~$SEP"))
@@ -36,140 +136,12 @@ def resolveHome(fn: String): String =
   else
     fn
 
-def getRows(name: String): List[Row] =
-  val workbook = WorkbookFactory.create(new File(name))
-  val res = workbook.getSheetAt(0).iterator.asScala.toList
-  workbook.close()
-  res
+def rows(fn: String, pw: String = null) =
+  getRows(resolveHome(fn), pw).tail.map(getStrings)
 
-def getStrings(row: Row): List[String] =
-  row.iterator.asScala.toList.map(getString)
+def unvaccinated(l: List[(Respondant, Vaccine)]) =
+  l.count(_._2.unvaccinated).toDouble
 
-def getString(c: Cell): String =
-  if (c == null) ""
-  else
-    val s = c.getCellType match
-      case CellType.NUMERIC => c.getNumericCellValue.toLong.toString
-      case CellType.FORMULA => c.getCellFormula
-      case _                => c.getStringCellValue
-    s.trim.filterNot(_.isControl)
+def ongoing(l: List[(Respondant, Vaccine)]) = l.count(_._2.ongoing).toDouble
 
-val formatter = DateTimeFormat.forPattern("yyyyMMdd")
-val comparator = DateTimeComparator.getDateOnlyInstance
-val today = LocalDate.now
-
-extension (d1: LocalDate)
-  def compare(d2: LocalDate): Int =
-    comparator.compare(d1.toDateTimeAtStartOfDay, d2.toDateTimeAtStartOfDay)
-  def <(d2: LocalDate): Boolean = (d1 compare d2) < 0
-  def <=(d2: LocalDate): Boolean = (d1 compare d2) <= 0
-  def >(d2: LocalDate): Boolean = (d1 compare d2) > 0
-  def >=(d2: LocalDate): Boolean = (d1 compare d2) >= 0
-
-def parseDate(s: String, f: String => Error): Either[Error, LocalDate] =
-  try
-    val allDigit = s.forall(_.isDigit)
-    val R = "(\\d+)".r
-    val splitted =
-      s.split("[^\\d]").filter(_.nonEmpty) match
-        case Array("2021" | "21", R(m), R(d)) =>
-          Some(f"2021${m.toInt}%02d${d.toInt}%02d")
-        case _ => None
-    val ds = s.filter(_.isDigit)
-    val zsplitted =
-      val opt = ds.split("0").filter(_.nonEmpty).toList match
-        case "2" :: "21" :: m :: d :: Nil       => Some((m, d))
-        case "2" :: "2" :: "1" :: m :: d :: Nil => Some((m, d))
-        case _                                  => None
-      opt.map { case (m, d) => f"2021${m.toInt}%02d${d.toInt}%02d" }
-
-    val ns =
-      if (allDigit && s.length == 8) s
-      else if (allDigit && s.length == 6 && s.startsWith("21")) s"20$s"
-      else if (splitted.nonEmpty) splitted.get
-      else if (ds.length == 8) ds
-      else if (zsplitted.nonEmpty) zsplitted.get
-      else if (
-        ds.length == 9 && (ds.startsWith("20210") || ds.startsWith("20201"))
-      ) s"2021${s.substring(5)}"
-      else ds
-    val d = formatter.parseLocalDate(ns)
-    assert(formatter.print(d) == ns)
-    Right(d.withYear(2021))
-  catch case _: Exception => Left(f(s))
-
-case class Person(
-    pid: String,
-    name: String,
-    en: String,
-    sn: String,
-    deptCode: String,
-    dept: String,
-    phone: String,
-    email: String,
-    vaccine: Either[Error, Vaccine]
-):
-  def nums = (en, sn)
-
-object Person:
-  def checkOrder(
-      d1: LocalDate,
-      d2: LocalDate,
-      f: (LocalDate, LocalDate) => Error
-  ): Either[Error, Unit] =
-    if (d1 < d2) Right(()) else Left(f(d1, d2))
-
-  def apply(row: List[String]): Person =
-    val pid :: name :: en :: sn :: deptCode :: dept :: phone :: email :: tl =
-      row
-    val vaccine = tl match
-      case s :: Nil => UnvaccinatedReason.parse(s).map(Unvaccinated.apply)
-      case s1 :: _ :: s2 :: Nil =>
-        for
-          d1 <- parseDate(s1, Error.OngoingFirstDate.apply);
-          d2 <- parseDate(s2, Error.OngoingSecondDate.apply);
-          _ <- checkOrder(d1, d2, Error.OngoingOrder.apply)
-        yield Ongoing(d1, d2)
-      case s1 :: _ :: s2 :: _ :: Nil =>
-        def _d2 =
-          if (s2.toLowerCase.filter(_.isLetter).contains("na")) Right(None)
-          else parseDate(s2, Error.CompletedSecondDate.apply).map(Some.apply)
-        for
-          d1 <- parseDate(s1, Error.CompletedFirstDate.apply);
-          d2 <- _d2;
-          _ <- d2
-            .map(checkOrder(d1, _, Error.CompletedOrder.apply))
-            .getOrElse(Right(()))
-        yield Completed(d1, d2)
-      case _ => unreachable
-    Person(pid, name, en, sn, deptCode, dept, phone, email, vaccine)
-
-enum Vaccine:
-  case Unvaccinated(reason: UnvaccinatedReason)
-  case Ongoing(fst: LocalDate, snd: LocalDate)
-  case Completed(fst: LocalDate, snd: Option[LocalDate])
-
-enum UnvaccinatedReason:
-  case NoPlan
-  case Planning
-  case Scheduled(date: LocalDate)
-
-object UnvaccinatedReason:
-  def parse(s: String): Either[Error, UnvaccinatedReason] = s.charAt(0) match
-    case '1' => Right(NoPlan)
-    case '2' => Right(Planning)
-    case '3' =>
-      if (s.length == 11)
-        parseDate(s.substring(2, s.length - 1), Error.ScheduledDate.apply)
-          .map(Scheduled.apply)
-      else Left(Error.ScheduledDate(s))
-    case _ => unreachable
-
-enum Error:
-  case ScheduledDate(s: String)
-  case OngoingFirstDate(s: String)
-  case OngoingSecondDate(s: String)
-  case OngoingOrder(d1: LocalDate, d2: LocalDate)
-  case CompletedFirstDate(s: String)
-  case CompletedSecondDate(s: String)
-  case CompletedOrder(d1: LocalDate, d2: LocalDate)
+def completed(l: List[(Respondant, Vaccine)]) = l.count(_._2.completed).toDouble
