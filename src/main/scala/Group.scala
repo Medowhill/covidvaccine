@@ -24,19 +24,6 @@ class Group(
   def ongoing: Double = rList.count(_._2.ongoing)
   def completed: Double = rList.count(_._2.completed)
 
-  def getData: List[String | Double] =
-    List(
-      name,
-      total,
-      notResponded,
-      notRespondedActive,
-      errResponded,
-      responded,
-      unvaccinated,
-      ongoing,
-      completed
-    )
-
   def getStat: List[Double] =
     List(
       total,

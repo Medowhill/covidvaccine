@@ -1,4 +1,10 @@
-import java.io.File.separator as SEP
+import org.apache.commons.io.FileUtils
+
+import java.io.File
+import File.separator as SEP
+
+import scala.jdk.CollectionConverters._
+import scala.util.chaining._
 
 lazy val unreachable = sys.error("unreachable")
 
@@ -9,10 +15,22 @@ lazy val unreachable = sys.error("unreachable")
     fnSt: String,
     stPw: String,
     fnEm: String,
-    emPw: String
+    emPw: String,
+    dnEx: String
 ): Unit =
+  val dirEx = File(dnEx)
+  require(dirEx.isDirectory)
+  val exs = FileUtils
+    .listFiles(dirEx, Array("xlsx"), true)
+    .asScala
+    .filter(!_.getName.startsWith("~"))
+    .flatMap(_.getAbsolutePath.pipe(getRows(_, null)))
+    .map(getStringsWithColors(_)(1))
+    .collect { case (n, c) if c == "FFFFFF00" => n }
+    .toSet
+
   val students = rows(fnSt, stPw).map(Student.parse)
-  val employees = rows(fnEm, emPw).map(Employee.parse)
+  val employees = rows(fnEm, emPw).map(Employee.parse).filterNot(_.en.pipe(exs))
   val people = (students ++ employees).sorted
 
   val pevs = (rows(fn3) ++ rows(fn2) ++ rows(fn1))
@@ -52,7 +70,10 @@ lazy val unreachable = sys.error("unreachable")
       "유효 응답자",
       "미접종자",
       "부분 완료자",
-      "완료자"
+      "완료자",
+      "미접종자 비율",
+      "부분 완료자 비율",
+      "완료자 비율"
     )
 
   val errors = pes.map { case (p, (es, is)) =>
@@ -63,23 +84,21 @@ lazy val unreachable = sys.error("unreachable")
   }
 
   writeWorkbook("설문조사 응답 현황.xlsx") { wb =>
-    val st = wb.createStyle(0xc0, 0xc0, 0xc0)
     def aux(s: String, l: List[Group])(sheet: SheetWrapper) =
-      sheet.setStyle(st)
+      sheet.addHeaderRows(0, l.length + 1)
+      sheet.addPercentCols(9, 10, 11)
       sheet.write(s :: header)
-      sheet.clearStyle()
-      l.map(_.getData).foreach(sheet.write)
-      sheet.setStyle(st)
-      val a: List[String | Double] = "전체" :: l
+      for d <- l do sheet.write(d.name :: addPercent(d.getStat))
+      val total = l
         .map(_.getStat)
         .foldLeft(List.fill(8)(0.0))((a, b) => a.zip(b).map(_ + _))
-      sheet.write(a)
+      sheet.write("전체" :: addPercent(total))
 
     wb.writeSheet("직군별 통계")(aux("직군", states))
     wb.writeSheet("부서별 통계")(aux("부서", depts))
     wb.writeSheet("잘못된 응답") { sheet =>
       (4 to 10).foreach(sheet.setWidth(_, 10))
-      sheet.setStyle(st)
+      sheet.addHeaderRow(0)
       sheet.write(
         "이름",
         "사번",
@@ -94,7 +113,6 @@ lazy val unreachable = sys.error("unreachable")
         "2차 로트번호",
         "상세"
       )
-      sheet.clearStyle()
       errors.foreach(sheet.write)
     }
   }
@@ -105,24 +123,22 @@ lazy val unreachable = sys.error("unreachable")
       .partition(_.notRespondedActive >= 30)
   for d <- large do
     writeWorkbook(s"${d.name}.xlsx") { wb =>
-      val st = wb.createStyle(0xc0, 0xc0, 0xc0)
       wb.writeSheet("미응답자") { sheet =>
-        sheet.setStyle(st)
+        sheet.addHeaderRow(0)
         sheet.write("이름", "사번", "학번", "이메일")
-        sheet.clearStyle()
         d.nraList.map(_.getData).foreach(sheet.write)
       }
     }
   writeWorkbook("기타 부서.xlsx") { wb =>
-    val st = wb.createStyle(0xc0, 0xc0, 0xc0)
     wb.writeSheet("미응답자") { sheet =>
-      sheet.setStyle(st)
+      sheet.addHeaderRow(0)
       sheet.write("이름", "사번", "학번", "이메일")
+      var r = 1
       for d <- small do
-        sheet.setStyle(st)
+        sheet.addHeaderRow(r)
         sheet.write(d.name, "", "", "")
-        sheet.clearStyle()
         d.nraList.map(_.getData).foreach(sheet.write)
+        r += d.nraList.length + 1
     }
   }
 
@@ -134,3 +150,9 @@ def resolveHome(fn: String): String =
 
 def rows(fn: String, pw: String = null) =
   getRows(resolveHome(fn), pw).tail.map(getStrings)
+
+def addPercent(l: List[Double]): List[String | Double] =
+  val List(_, _, _, _, r, u, o, c) = l
+  def div(a: Double, b: Double): String | Double =
+    if (b == 0) "-" else a / b
+  l ++ List(div(u, r), div(o, r), div(c, r))
