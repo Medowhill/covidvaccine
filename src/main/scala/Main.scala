@@ -6,6 +6,8 @@ import File.separator as SEP
 import scala.jdk.CollectionConverters._
 import scala.util.chaining._
 
+import Vaccine.Ongoing
+
 lazy val unreachable = sys.error("unreachable")
 
 @main def main(
@@ -16,22 +18,35 @@ lazy val unreachable = sys.error("unreachable")
     stPw: String,
     fnEm: String,
     emPw: String,
-    dnEx: String
+    dnEx: String,
+    dnPr: String
 ): Unit =
-  val dirEx = File(dnEx)
-  require(dirEx.isDirectory)
-  val exs = FileUtils
-    .listFiles(dirEx, Array("xlsx"), true)
-    .asScala
-    .filter(!_.getName.startsWith("~"))
-    .flatMap(_.getAbsolutePath.pipe(getRows(_, null)))
+  val exs = getXlsxs(dnEx)
     .map(getStringsWithColors(_)(1))
     .collect { case (n, c) if c == "FFFFFF00" => n }
     .toSet
 
+  val _prs = getXlsxs(dnPr)
+    .map(getStrings)
+    .filter(_.length > 4)
+    .filter(_.head != "이름")
+    .map(Respondant.parse2)
+    .groupBy(_._1)
+    .map { case (r, l) =>
+      r -> l
+        .map { case (_, a, b) => (a, b) }
+        .toList
+        .sortBy { case (e, _) => if (e.isLeft) 1 else 0 }
+        .unzip
+    }
+  val prs = _prs.collect { case (p, (Right(v) :: _, _)) => p -> v }.toList
+  val pres = _prs.filter(_._2._1.head.isLeft)
+  val prIds = prs.flatMap((p, v) => List(p.en, p.sn)).toSet.filter(_.nonEmpty)
+
   val students = rows(fnSt, stPw).map(Student.parse)
   val employees = rows(fnEm, emPw).map(Employee.parse).filterNot(_.en.pipe(exs))
   val people = (students ++ employees).sorted
+  val deptMap = people.map(p => p.number -> p.dept).toMap
 
   val pevs = (rows(fn3) ++ rows(fn2) ++ rows(fn1))
     .map(Respondant.parse)
@@ -40,11 +55,14 @@ lazy val unreachable = sys.error("unreachable")
     .toList
     .sortBy(_._1)
 
-  val pvs = pevs.collect { case (p, (Right(v) :: _, _)) => p -> v }
-  val pes = pevs.filter(_._2._1.head.isLeft)
+  val _pvs = pevs.collect { case (p, (Right(v) :: _, _)) => p -> v }
+  val _pes = pevs.filter(_._2._1.head.isLeft)
 
-  println(s"총 응답자 수: ${pevs.length}명")
-  println(s"유효 응답자 수: ${pvs.length}명")
+  val pvIds = _pvs.flatMap((p, v) => List(p.en, p.sn)).toSet.filter(_.nonEmpty)
+
+  val pvs = _pvs ++ prs.filter { case (r, _) => !pvIds(r.en) && !pvIds(r.sn) }
+  val pes = _pes.filter { case (r, _) => !prIds(r.en) && !prIds(r.sn) } ++ pres
+
   println(s"잘못된 응답자 수: ${pes.length}명")
 
   val vMap = pvs.flatMap { (p, v) =>
@@ -78,12 +96,13 @@ lazy val unreachable = sys.error("unreachable")
 
   val errors = pes.map { case (p, (es, is)) =>
     val i2 = is.find(_.length == 3).getOrElse(List("", "", ""))
-    val i3 = is.find(_.length == 4).getOrElse(List("", "", "", ""))
+    val i3 =
+      is.find(_.length >= 4).map(_.take(4)).getOrElse(List("", "", "", ""))
     val e = es.collect { case Left(e) => e.toString }.mkString(", ")
     List(p.name, p.en, p.sn, p.email) ++ i2 ++ i3 :+ e
   }
 
-  writeWorkbook("설문조사 응답 현황.xlsx") { wb =>
+  writeWorkbook("out/설문조사 응답 현황.xlsx") { wb =>
     def aux(s: String, l: List[Group])(sheet: SheetWrapper) =
       sheet.addHeaderRows(0, l.length + 1)
       sheet.addPercentCols(9, 10, 11)
@@ -115,32 +134,74 @@ lazy val unreachable = sys.error("unreachable")
       )
       errors.foreach(sheet.write)
     }
+    wb.writeSheet("부분 완료자") { sheet =>
+      sheet.addHeaderRow(0)
+      sheet.write(
+        "이름",
+        "사번",
+        "학번",
+        "이메일"
+      )
+      pvs
+        .sortBy(_._1)
+        .collect { case (r, o: Ongoing) => List(r.name, r.en, r.sn, r.email) }
+        .foreach(sheet.write)
+    }
   }
 
+  val header1 = List("이름", "사번", "학번", "이메일")
   val (large, small) =
     depts
-      .filter(_.notRespondedActive != 0)
-      .partition(_.notRespondedActive >= 30)
+      .filter(d => d.notRespondedActive != 0 || d.ongoing != 0)
+      .partition(d => d.notRespondedActive >= 30 || d.ongoing >= 20)
   for d <- large do
-    writeWorkbook(s"${d.name}.xlsx") { wb =>
-      wb.writeSheet("미응답자") { sheet =>
-        sheet.addHeaderRow(0)
-        sheet.write("이름", "사번", "학번", "이메일")
-        d.nraList.map(_.getData).foreach(sheet.write)
-      }
+    writeWorkbook(s"out/${d.name}.xlsx") { wb =>
+      if (d.notRespondedActive != 0)
+        wb.writeSheet("미응답자") { sheet =>
+          sheet.addHeaderRow(0)
+          sheet.write(header1)
+          d.nraList.map(_.getData).foreach(sheet.write)
+        }
+      if (d.ongoing != 0)
+        wb.writeSheet("부분 완료자") { sheet =>
+          sheet.addHeaderRow(0)
+          sheet.write(header1)
+          d.ongoingList.map(_.getData).foreach(sheet.write)
+        }
     }
-  writeWorkbook("기타 부서.xlsx") { wb =>
+  writeWorkbook("out/기타 부서.xlsx") { wb =>
     wb.writeSheet("미응답자") { sheet =>
       sheet.addHeaderRow(0)
-      sheet.write("이름", "사번", "학번", "이메일")
+      sheet.write(header1)
       var r = 1
       for d <- small do
-        sheet.addHeaderRow(r)
-        sheet.write(d.name, "", "", "")
-        d.nraList.map(_.getData).foreach(sheet.write)
-        r += d.nraList.length + 1
+        if (d.notRespondedActive != 0)
+          sheet.addHeaderRow(r)
+          sheet.write(d.name, "", "", "")
+          d.nraList.map(_.getData).foreach(sheet.write)
+          r += d.notRespondedActive.toInt + 1
+    }
+    wb.writeSheet("부분 완료자") { sheet =>
+      sheet.addHeaderRow(0)
+      sheet.write(header1)
+      var r = 1
+      for d <- small do
+        if (d.ongoing != 0)
+          sheet.addHeaderRow(r)
+          sheet.write(d.name, "", "", "")
+          d.ongoingList.map(_.getData).foreach(sheet.write)
+          r += d.ongoing.toInt + 1
     }
   }
+
+def getXlsxs(dn: String) =
+  val dir = File(dn)
+  require(dir.isDirectory)
+  FileUtils
+    .listFiles(dir, Array("xlsx"), true)
+    .asScala
+    .filter(!_.getName.startsWith("~"))
+    .flatMap(_.getAbsolutePath.pipe(getRows(_, null)))
 
 def resolveHome(fn: String): String =
   if (fn.startsWith(s"~$SEP"))
@@ -149,7 +210,7 @@ def resolveHome(fn: String): String =
     fn
 
 def rows(fn: String, pw: String = null) =
-  getRows(resolveHome(fn), pw).tail.map(getStrings)
+  getRows(resolveHome(fn), pw).tail.map(getStrings).filter(_.nonEmpty)
 
 def addPercent(l: List[Double]): List[String | Double] =
   val List(_, _, _, _, r, u, o, c) = l

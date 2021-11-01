@@ -15,23 +15,25 @@ class Group(
   val rList: List[(Person, Vaccine)] =
     vList.collect { case (p, Some(v)) => p -> v }
 
-  def total: Double = people.length.toDouble
-  def notResponded: Double = nrList.length.toDouble
-  def notRespondedActive: Double = nraList.length.toDouble
-  def errResponded: Double = erList.length.toDouble
-  def responded: Double = rList.length.toDouble
-  def unvaccinated: Double = rList.count(_._2.unvaccinated)
-  def ongoing: Double = rList.count(_._2.ongoing)
-  def completed: Double = rList.count(_._2.completed)
+  val ongoingList: List[Person] = rList.filter(_._2.ongoing).map(_._1)
+
+  def total = people.length
+  def notResponded = nrList.length
+  def notRespondedActive = nraList.length
+  def errResponded = erList.length
+  def responded = rList.length
+  def unvaccinated = rList.count(_._2.unvaccinated)
+  def ongoing = ongoingList.length
+  def completed = rList.count(_._2.completed)
 
   def getStat: List[Double] =
     List(
-      total,
-      notResponded,
-      notRespondedActive,
-      errResponded,
-      responded,
-      unvaccinated,
-      ongoing,
-      completed
+      total.toDouble,
+      notResponded.toDouble,
+      notRespondedActive.toDouble,
+      errResponded.toDouble,
+      responded.toDouble,
+      unvaccinated.toDouble,
+      ongoing.toDouble,
+      completed.toDouble
     )

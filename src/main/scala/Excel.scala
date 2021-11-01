@@ -27,10 +27,17 @@ def getRows(name: String, password: String = null): List[Row] =
   res
 
 def getStrings(row: Row): List[String] =
-  row.iterator.asScala.toList.map(getString)
+  val l = getCells(row).map(_.map(getString).getOrElse(""))
+  if (l.forall(_.isEmpty)) Nil else l
 
 def getStringsWithColors(row: Row): List[(String, String)] =
-  row.iterator.asScala.toList.map(getStringWithColor)
+  getCells(row).map(_.map(getStringWithColor).getOrElse(("", "")))
+
+def getCells(row: Row): List[Option[Cell]] =
+  val l = row.iterator.asScala.toList
+  val m = l.map(c => c.getColumnIndex -> c).toMap
+  val max = m.keySet.max
+  (0 to max).map(m.get).toList
 
 def getString(c: Cell): String =
   if (c == null) ""

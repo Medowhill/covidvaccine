@@ -4,6 +4,7 @@ import org.joda.time.{DateTimeComparator, LocalDate}
 val typos = Set("20210", "20201", "20121", "22021", "20221")
 
 def parseDate(s: String, f: String => Error): Either[Error, LocalDate] =
+  if (s == "N/A") return Right(LocalDate.now)
   val formatter = DateTimeFormat.forPattern("yyyyMMdd")
   try
     val allDigit = s.forall(_.isDigit)

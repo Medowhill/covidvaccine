@@ -6,3 +6,4 @@ metals.sbt
 .bloop
 .bsp
 *.xlsx
+*.xls
